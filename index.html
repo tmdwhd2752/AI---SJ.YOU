@@ -1088,7 +1088,7 @@ async function issueLogSectionHtml(timelineId, stageIdx, subIdx){
         <input type="text" id="${timelineId}-issueLogAuthor" placeholder="작성자 (선택)">
         <textarea id="${timelineId}-issueLogIssue" rows="2" placeholder="어떤 이슈였나요? (예: 감정평가서 서류 누락으로 재결 신청 반려)"></textarea>
         <textarea id="${timelineId}-issueLogResolution" rows="2" placeholder="어떻게 해결했나요? (아직 진행 중이면 비워두세요)"></textarea>
-        <button id="${timelineId}-issueLogAddBtn" onclick="addIssueLogEntry('${timelineId}',${stageIdx},${subIdx})">+ 이슈 기록 추가</button>
+        <button id="${timelineId}-issueLogAddBtn" onclick="addIssueLogEntry('${timelineId}',${stageIdx},${subIdx})">💾 이 이슈 저장하기</button>
       </div>
     </div>`;
 }
@@ -1127,11 +1127,13 @@ async function addIssueLogEntry(timelineId, stageIdx, subIdx){
       });
       saveLocalIssueLogs(logs);
     }
-    await refreshIssueLogSection(timelineId, stageIdx, subIdx);
     showToast('✅ 이슈 기록이 저장되었습니다');
+    if(btn){ btn.textContent = '✅ 저장 완료!'; btn.style.background = '#1a7f4b'; }
+    await new Promise(r => setTimeout(r, 800));
+    await refreshIssueLogSection(timelineId, stageIdx, subIdx);
   }catch(e){
     alert('이슈 기록 저장에 실패했습니다: ' + e.message);
-    if(btn){ btn.disabled = false; btn.textContent = '+ 이슈 기록 추가'; }
+    if(btn){ btn.disabled = false; btn.textContent = '💾 이 이슈 저장하기'; }
   }
 }
 function showToast(message, isError){
