@@ -122,18 +122,22 @@
   /* 세부 단계별 팀 이슈 기록(우리가 실제로 겪은 이슈 + 해결방법, localStorage에 영구 보관) */
   .issue-log-section{margin-top:14px;padding-top:12px;border-top:1px dashed #e0a458;}
   .issue-log-list{margin-bottom:10px;}
-  .issue-log-item{background:#fdfaf5;border:1px solid #ecd8b5;border-radius:8px;padding:9px 32px 9px 11px;margin-bottom:8px;position:relative;}
-  .issue-log-meta{font-size:10.5px;color:var(--muted);margin-bottom:4px;display:flex;align-items:center;gap:6px;}
+  .issue-log-item{background:#fdfaf5;border:1px solid #ecd8b5;border-radius:8px;padding:9px 54px 9px 11px;margin-bottom:8px;position:relative;}
+  .issue-log-meta{font-size:10.5px;color:var(--muted);margin-bottom:4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
   .issue-log-status{font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;}
   .issue-log-status.resolved{background:#e6f4ea;color:#1a7f4b;}
   .issue-log-status.open{background:#fdeaea;color:#c0392b;}
+  .issue-log-readonly{font-size:10px;color:var(--muted);background:#eee;padding:1px 7px;border-radius:8px;}
   .issue-log-issue{font-size:12.5px;line-height:1.55;margin-bottom:4px;white-space:pre-wrap;}
   .issue-log-resolution{font-size:12.5px;line-height:1.55;color:var(--navy2);white-space:pre-wrap;}
-  .issue-log-delete{position:absolute;top:8px;right:8px;background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:2px 6px;font-weight:400;}
+  .issue-log-actions{position:absolute;top:8px;right:8px;display:flex;gap:2px;}
+  .issue-log-edit,.issue-log-delete{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:2px 6px;font-weight:400;}
+  .issue-log-edit:hover{color:#2f6fed;opacity:1;}
   .issue-log-delete:hover{color:#c0392b;opacity:1;}
   .issue-log-form textarea{margin-bottom:6px;font-size:12.5px;}
   .issue-log-form input[type=text]{margin-bottom:6px;font-size:12.5px;}
   .issue-log-form button{font-size:12px;padding:6px 12px;background:#c9781e;}
+  .issue-log-form button.ghost-cancel{background:#fff;color:var(--muted);border:1px solid #ecd8b5;}
 
   #appToast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1a7f4b;color:#fff;
     padding:11px 22px;border-radius:24px;font-size:13.5px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);
@@ -299,7 +303,9 @@
 
 <script>
 /* ============ 팀 이슈 기록 공유 설정 (Supabase) ============
-   1) supabase.com에서 이 앱 전용 프로젝트를 만들고, 아래 SQL을 SQL Editor에서 실행:
+   1) supabase.com에서 이 앱 전용 프로젝트를 만들고, Authentication > Sign In / Providers에서
+      "Anonymous Sign-Ins"를 켠 뒤(각 방문자를 서로 구분하기 위한 최소한의 신원), 아래 SQL을
+      SQL Editor에서 실행:
         create table issue_logs (
           id bigint generated always as identity primary key,
           timeline_id text not null,
@@ -308,19 +314,48 @@
           author text,
           issue text not null,
           resolution text,
+          owner_id uuid default auth.uid(),
           created_at timestamptz not null default now()
         );
         alter table issue_logs enable row level security;
         create policy "issue_logs_select_all" on issue_logs for select using (true);
-        create policy "issue_logs_insert_all" on issue_logs for insert with check (true);
-        create policy "issue_logs_delete_all" on issue_logs for delete using (true);
+        create policy "issue_logs_insert_own" on issue_logs for insert
+          with check (auth.uid() is not null and owner_id = auth.uid());
+        create policy "issue_logs_update_own" on issue_logs for update
+          using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+        create policy "issue_logs_delete_own" on issue_logs for delete
+          using (owner_id = auth.uid());
    2) 프로젝트의 Settings > API 에서 Project URL과 anon public key를 아래에 붙여넣기.
-      (anon key는 공개되어도 되는 값 — RLS 정책으로 접근을 제어함) */
+      (anon key는 공개되어도 되는 값 — RLS 정책으로 접근을 제어함)
+   3) 누가 썼는지는 "익명 로그인"으로 브라우저마다 자동 발급되는 고유 ID(owner_id)로 구분함.
+      로그인 화면 없이 조용히 동작하며, 이 ID 덕분에 본인 글만 수정·삭제할 수 있게 됨. */
 const SUPABASE_URL = "https://rjowdqbjtdlecdirgxlh.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_CcMPbKFj9I5xp8OUAq_Wug_21BbtTGe";
 const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
+
+let currentUserId = null;
+let anonSessionPromise = null;
+function ensureAnonSession(){
+  if(!supabaseClient) return Promise.resolve(null);
+  if(anonSessionPromise) return anonSessionPromise;
+  anonSessionPromise = (async () => {
+    try{
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if(session && session.user){ currentUserId = session.user.id; return currentUserId; }
+      const { data, error } = await supabaseClient.auth.signInAnonymously();
+      if(error) throw error;
+      currentUserId = data.user.id;
+      return currentUserId;
+    }catch(e){
+      console.error('익명 로그인 실패 — 본인 글 구분 기능이 비활성화됩니다:', e);
+      return null;
+    }
+  })();
+  return anonSessionPromise;
+}
+ensureAnonSession();
 
 /* ============ 기본 데이터 ============ */
 const DEFAULT_TERMS = [
@@ -1045,31 +1080,42 @@ async function fetchIssueLogEntries(parts){
       .eq('timeline_id', parts.timelineId).eq('stage_title', parts.stageTitle).eq('substep_title', parts.substepTitle)
       .order('created_at', { ascending: false });
     if(error) throw error;
-    return data.map(r => ({ id:r.id, date:(r.created_at||'').slice(0,10), author:r.author||'', issue:r.issue, resolution:r.resolution||'' }));
+    return data.map(r => ({ id:r.id, date:(r.created_at||'').slice(0,10), author:r.author||'', issue:r.issue, resolution:r.resolution||'', ownerId:r.owner_id||null }));
   }
   const logs = loadLocalIssueLogs();
   return (logs[localIssueLogKey(parts)] || []).slice().reverse();
 }
 
+/* 세부단계별로 마지막에 불러온 항목을 캐시해둠 — "수정" 클릭 시 다시 불러오지 않고 바로 폼에 채우기 위함 */
+const issueLogCache = {};
+
 async function issueLogSectionHtml(timelineId, stageIdx, subIdx){
   const parts = issueLogParts(timelineId, stageIdx, subIdx);
   if(!parts) return '';
+  await ensureAnonSession();
   let entries = [];
   let loadError = false;
   try{ entries = await fetchIssueLogEntries(parts); }
   catch(e){ loadError = true; console.error('이슈 기록 조회 실패', e); }
+  issueLogCache[`${timelineId}::${stageIdx}::${subIdx}`] = entries;
 
   const listHtml = loadError
     ? `<p class="small" style="color:#c0392b;">이슈 기록을 불러오지 못했습니다. 인터넷 연결 또는 Supabase 설정을 확인해주세요.</p>`
     : (entries.length ? entries.map(e=>{
         const resolved = !!(e.resolution && e.resolution.trim());
         const idArg = typeof e.id === 'number' ? e.id : `'${e.id}'`;
+        const isMine = !supabaseClient || (currentUserId && e.ownerId === currentUserId);
         return `
         <div class="issue-log-item">
-          <button class="issue-log-delete" title="삭제" onclick="deleteIssueLogEntry('${timelineId}',${stageIdx},${subIdx},${idArg})">✕</button>
+          ${isMine ? `
+          <div class="issue-log-actions">
+            <button class="issue-log-edit" title="수정" onclick="handleEditClick('${timelineId}',${stageIdx},${subIdx},${idArg})">✎</button>
+            <button class="issue-log-delete" title="삭제" onclick="deleteIssueLogEntry('${timelineId}',${stageIdx},${subIdx},${idArg})">✕</button>
+          </div>` : ''}
           <div class="issue-log-meta">
             <span>${escapeHtml(e.date)}</span>${e.author ? `<span>· ${escapeHtml(e.author)}</span>` : ''}
             <span class="issue-log-status ${resolved ? 'resolved' : 'open'}">${resolved ? '✅ 해결' : '🔴 진행중'}</span>
+            ${!isMine ? '<span class="issue-log-readonly">🔒 다른 팀원 작성</span>' : ''}
           </div>
           <div class="issue-log-issue"><b>이슈</b> ${escapeHtml(e.issue)}</div>
           ${resolved ? `<div class="issue-log-resolution"><b>해결방법</b> ${escapeHtml(e.resolution)}</div>` : ''}
@@ -1088,7 +1134,10 @@ async function issueLogSectionHtml(timelineId, stageIdx, subIdx){
         <input type="text" id="${timelineId}-issueLogAuthor" placeholder="작성자 (선택)">
         <textarea id="${timelineId}-issueLogIssue" rows="2" placeholder="어떤 이슈였나요? (예: 감정평가서 서류 누락으로 재결 신청 반려)"></textarea>
         <textarea id="${timelineId}-issueLogResolution" rows="2" placeholder="어떻게 해결했나요? (아직 진행 중이면 비워두세요)"></textarea>
-        <button id="${timelineId}-issueLogAddBtn" onclick="addIssueLogEntry('${timelineId}',${stageIdx},${subIdx})">💾 이 이슈 저장하기</button>
+        <div style="display:flex; gap:8px;">
+          <button id="${timelineId}-issueLogAddBtn" onclick="addIssueLogEntry('${timelineId}',${stageIdx},${subIdx})">💾 이 이슈 저장하기</button>
+          <button id="${timelineId}-issueLogCancelBtn" class="ghost-cancel" style="display:none;" onclick="cancelEditIssueLogEntry('${timelineId}')" type="button">취소</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1108,33 +1157,76 @@ async function addIssueLogEntry(timelineId, stageIdx, subIdx){
   const entry = { author: authorEl.value.trim(), issue: issueText, resolution: resEl.value.trim() };
 
   const btn = document.getElementById(`${timelineId}-issueLogAddBtn`);
-  if(btn){ btn.disabled = true; btn.textContent = '저장 중…'; }
+  const editingId = btn ? btn.dataset.editingId : null;
+  const isEditing = !!editingId;
+
+  if(btn){ btn.disabled = true; btn.textContent = isEditing ? '수정 저장 중…' : '저장 중…'; }
   try{
+    await ensureAnonSession();
     if(supabaseClient){
-      const { error } = await supabaseClient.from('issue_logs').insert({
-        timeline_id: parts.timelineId, stage_title: parts.stageTitle, substep_title: parts.substepTitle,
-        author: entry.author || null, issue: entry.issue, resolution: entry.resolution || null
-      });
-      if(error) throw error;
+      if(isEditing){
+        const { error } = await supabaseClient.from('issue_logs').update({
+          author: entry.author || null, issue: entry.issue, resolution: entry.resolution || null
+        }).eq('id', editingId);
+        if(error) throw error;
+      } else {
+        const { error } = await supabaseClient.from('issue_logs').insert({
+          timeline_id: parts.timelineId, stage_title: parts.stageTitle, substep_title: parts.substepTitle,
+          author: entry.author || null, issue: entry.issue, resolution: entry.resolution || null
+        });
+        if(error) throw error;
+      }
     } else {
       const logs = loadLocalIssueLogs();
       const k = localIssueLogKey(parts);
       if(!logs[k]) logs[k] = [];
-      logs[k].push({
-        id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-        date: new Date().toISOString().slice(0,10),
-        author: entry.author, issue: entry.issue, resolution: entry.resolution
-      });
+      if(isEditing){
+        const idx = logs[k].findIndex(e => String(e.id) === String(editingId));
+        if(idx >= 0){ logs[k][idx] = { ...logs[k][idx], author: entry.author, issue: entry.issue, resolution: entry.resolution }; }
+      } else {
+        logs[k].push({
+          id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+          date: new Date().toISOString().slice(0,10),
+          author: entry.author, issue: entry.issue, resolution: entry.resolution
+        });
+      }
       saveLocalIssueLogs(logs);
     }
-    showToast('✅ 이슈 기록이 저장되었습니다');
-    if(btn){ btn.textContent = '✅ 저장 완료!'; btn.style.background = '#1a7f4b'; }
+    showToast(isEditing ? '✅ 수정 내용이 저장되었습니다' : '✅ 이슈 기록이 저장되었습니다');
+    if(btn){ btn.textContent = '✅ 저장 완료!'; btn.style.background = '#1a7f4b'; delete btn.dataset.editingId; }
+    const cancelBtn = document.getElementById(`${timelineId}-issueLogCancelBtn`);
+    if(cancelBtn) cancelBtn.style.display = 'none';
     await new Promise(r => setTimeout(r, 800));
     await refreshIssueLogSection(timelineId, stageIdx, subIdx);
   }catch(e){
-    alert('이슈 기록 저장에 실패했습니다: ' + e.message);
-    if(btn){ btn.disabled = false; btn.textContent = '💾 이 이슈 저장하기'; }
+    alert((isEditing ? '수정 저장에 실패했습니다: ' : '이슈 기록 저장에 실패했습니다: ') + e.message);
+    if(btn){ btn.disabled = false; btn.textContent = isEditing ? '💾 수정 내용 저장' : '💾 이 이슈 저장하기'; }
   }
+}
+function handleEditClick(timelineId, stageIdx, subIdx, id){
+  const entries = issueLogCache[`${timelineId}::${stageIdx}::${subIdx}`] || [];
+  const entry = entries.find(e => String(e.id) === String(id));
+  if(!entry) return;
+  document.getElementById(`${timelineId}-issueLogAuthor`).value = entry.author || '';
+  document.getElementById(`${timelineId}-issueLogIssue`).value = entry.issue || '';
+  document.getElementById(`${timelineId}-issueLogResolution`).value = entry.resolution || '';
+  const btn = document.getElementById(`${timelineId}-issueLogAddBtn`);
+  btn.textContent = '💾 수정 내용 저장';
+  btn.dataset.editingId = id;
+  const cancelBtn = document.getElementById(`${timelineId}-issueLogCancelBtn`);
+  if(cancelBtn) cancelBtn.style.display = 'inline-block';
+  document.getElementById(`${timelineId}-issueLogIssue`).scrollIntoView({behavior:'smooth', block:'center'});
+}
+function cancelEditIssueLogEntry(timelineId){
+  document.getElementById(`${timelineId}-issueLogAuthor`).value = '';
+  document.getElementById(`${timelineId}-issueLogIssue`).value = '';
+  document.getElementById(`${timelineId}-issueLogResolution`).value = '';
+  const btn = document.getElementById(`${timelineId}-issueLogAddBtn`);
+  btn.textContent = '💾 이 이슈 저장하기';
+  btn.style.background = '';
+  delete btn.dataset.editingId;
+  const cancelBtn = document.getElementById(`${timelineId}-issueLogCancelBtn`);
+  if(cancelBtn) cancelBtn.style.display = 'none';
 }
 function showToast(message, isError){
   let toast = document.getElementById('appToast');
@@ -1154,6 +1246,7 @@ async function deleteIssueLogEntry(timelineId, stageIdx, subIdx, id){
   const parts = issueLogParts(timelineId, stageIdx, subIdx);
   if(!parts) return;
   try{
+    await ensureAnonSession();
     if(supabaseClient){
       const { error } = await supabaseClient.from('issue_logs').delete().eq('id', id);
       if(error) throw error;
@@ -1858,6 +1951,8 @@ window.handleSubstepClick = handleSubstepClick;
 window.handleSubIssueClick = handleSubIssueClick;
 window.addIssueLogEntry = addIssueLogEntry;
 window.deleteIssueLogEntry = deleteIssueLogEntry;
+window.handleEditClick = handleEditClick;
+window.cancelEditIssueLogEntry = cancelEditIssueLogEntry;
 window.showTocArticle = showTocArticle;
 window.runFreshnessCheck = runFreshnessCheck;
 window.runRefreshOne = runRefreshOne;
