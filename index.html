@@ -203,6 +203,7 @@
   .issue-log-more-toggle{width:100%;background:#fbf7ee;color:#8a5a1e;border:1px dashed #e6ddc8;font-size:12px;padding:8px;margin-bottom:10px;}
   .issue-log-more-toggle:hover{opacity:1;background:#f5edd9;}
 
+  .timeline-back-btn{font-size:12px;padding:6px 12px;margin-bottom:14px;}
   .project-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 2px;}
   .admin-mini-btn{font-size:11.5px;padding:6px 12px;}
   .stage-admin-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
@@ -1127,12 +1128,10 @@ function registerAndRenderTimeline(timelineId, stages, detailId){
       <div class="step-label">${escapeHtml(s.title)}</div>
     </div>`).join('');
 
-  const curIdx = stages.findIndex(s=>s.current);
-  if(curIdx >= 0){
-    handleStepClick(timelineId, curIdx);
-    const curStage = stages[curIdx];
-    if(curStage.substeps && curStage.substeps.length){ handleSubstepClick(timelineId, curIdx, 0); }
-  }
+  /* 페이지를 열자마자 특정 단계 내용이 자동으로 펼쳐지면 절차도 전체를 한눈에 보기 어렵다는
+     의견에 따라, 처음엔 절차도만 보여주고(📍현재 배지는 유지) 단계를 눌러야 내용이 나오도록 함. */
+  const detailBox = document.getElementById(detailId);
+  if(detailBox){ detailBox.style.display = 'none'; detailBox.innerHTML = ''; }
 }
 
 function renderProcessTimeline(){
@@ -1264,8 +1263,11 @@ function handleStepClick(timelineId, i){
   const box = document.getElementById(reg.detailId);
   box.style.display = 'block';
 
+  const backBtn = `<button type="button" class="ghost timeline-back-btn" onclick="closeTimelineDetail('${timelineId}')">◀ 절차도로 돌아가기</button>`;
+
   if(s.substeps && s.substeps.length){
     box.innerHTML = `
+      ${backBtn}
       <h3 style="margin:0 0 8px;color:var(--navy2);font-size:15px;font-weight:800;">${s.icon} ${i+1}단계 — ${escapeHtml(s.title)}${s.current ? ' <span class="current-inline-badge">📍 현재 우리 사업 단계</span>' : ''}</h3>
       <p style="margin:0;font-size:13.5px;line-height:1.6;">${escapeHtml(s.desc)}</p>
       <p class="section-label" style="margin:14px 0 8px;">📂 세부 단계 <span class="hint-tag">눌러서 설명·이슈 보기</span></p>
@@ -1279,12 +1281,24 @@ function handleStepClick(timelineId, i){
       <div id="${timelineId}-substepDetail" class="substep-detail" style="display:none;"></div>`;
   } else {
     box.innerHTML = `
+      ${backBtn}
       <h3 style="margin:0 0 8px;color:var(--navy2);font-size:15px;font-weight:800;">${s.icon} ${i+1}단계 — ${escapeHtml(s.title)}${s.current ? ' <span class="current-inline-badge">📍 현재 우리 사업 단계</span>' : ''}</h3>
       <p style="margin:0;font-size:13.5px;line-height:1.6;">${escapeHtml(s.desc)}</p>
       <p class="section-label" style="margin:14px 0 8px;">🔥 이 단계에서 자주 나오는 이슈 <span class="hint-tag">눌러서 바로 검색</span></p>
       <div class="issue-chip-row">
         ${s.issues.map((q,qi)=>`<button class="chip" onclick="handleIssueClick('${timelineId}',${i},${qi})">${escapeHtml(q.length>28 ? q.slice(0,28)+'…' : q)}</button>`).join('')}
       </div>`;
+  }
+}
+
+function closeTimelineDetail(timelineId){
+  const reg = TIMELINE_REGISTRY[timelineId];
+  if(!reg) return;
+  const box = document.getElementById(reg.detailId);
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+  const timelineBox = document.getElementById(timelineId);
+  if(timelineBox){
+    timelineBox.querySelectorAll('.process-step').forEach(el => el.classList.remove('active','done'));
   }
 }
 
@@ -2247,6 +2261,7 @@ window.clearHistory = clearHistory;
 window.deleteHistoryItem = deleteHistoryItem;
 window.searchPrecedentsFor = searchPrecedentsFor;
 window.handleStepClick = handleStepClick;
+window.closeTimelineDetail = closeTimelineDetail;
 window.handleIssueClick = handleIssueClick;
 window.handleSubstepClick = handleSubstepClick;
 window.handleSubIssueClick = handleSubIssueClick;
