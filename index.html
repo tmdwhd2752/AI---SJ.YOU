@@ -81,10 +81,20 @@
   .small{font-size:12px;color:var(--muted);}
   .tag{display:inline-block;background:var(--accent-light);color:var(--accent);border-radius:4px;padding:1px 7px;font-size:11.5px;margin:2px 4px 2px 0;}
   .result-card{border:1px solid var(--border);border-radius:10px;padding:15px 17px;margin-bottom:14px;background:#fff;box-shadow:var(--shadow-sm);}
-  .result-head{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;}
+  .result-head{display:flex;flex-direction:column;gap:5px;}
+  .result-head-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
   .result-head .rank{background:var(--navy);color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;font-weight:700;}
-  .result-head .artno{font-family:var(--heading);font-size:16px;font-weight:800;letter-spacing:0;color:var(--navy2);}
-  .result-meta{font-size:11.5px;color:var(--muted);margin-top:2px;}
+  .result-head .artno{font-family:var(--heading);font-size:15px;font-weight:800;letter-spacing:0;color:var(--navy2);}
+  .result-meta{font-size:11.5px;color:var(--muted);}
+  /* 법령명이 조 번호보다 눈에 덜 띈다는 지적 — 어느 법령인지가 더 중요한 정보라 최상단에
+     색상 구분된 배지로 강조함(법/시행령/시행규칙/조례/조례시행규칙 색을 서로 다르게) */
+  .law-badge{font-family:var(--sans);font-weight:800;font-size:12px;padding:3px 11px;border-radius:8px;color:#fff;white-space:nowrap;}
+  .law-badge-law{background:var(--navy);}
+  .law-badge-decree{background:var(--accent);}
+  .law-badge-rule{background:var(--ok);}
+  .law-badge-ordin{background:#c9781e;}
+  .law-badge-ordinRule{background:#8a5a1e;}
+  .law-badge-other{background:var(--muted);}
   .origtext{white-space:pre-wrap;background:#fbfaf7;border:1px solid var(--border);border-radius:7px;padding:11px;margin-top:8px;font-size:13px;}
   .match-loc{font-size:11.5px;color:var(--ok);}
   .empty-state{color:var(--muted);font-size:13.5px;padding:20px 0;text-align:center;}
@@ -332,6 +342,14 @@
       <p id="searchLoadingMsg" class="small" style="display:none;margin-top:8px;color:var(--accent);">🤖 AI가 이슈를 분석해 검색어를 확장하는 중…</p>
     </div>
 
+    <div class="card" id="resultCard" style="display:none;">
+      <h2>2. 검토 메모 (결과)</h2>
+      <div id="resultBody"></div>
+      <div class="row" id="downloadRow" style="display:none;">
+        <button class="secondary" onclick="downloadMemo()">📄 마크다운으로 다운로드</button>
+      </div>
+    </div>
+
     <div class="card">
       <h2>🗺️ 정비사업 절차도로 바로 찾기</h2>
       <p class="small">지금 어느 단계에 있는지 눌러보세요. 단계 설명과 그 단계에서 자주 나오는 이슈를 바로 검색할 수 있습니다.</p>
@@ -355,14 +373,6 @@
       <p class="small">이슈 없이 조문 구조를 직접 훑어보고 싶을 때 사용하세요. 법령 → 장 → 절 → 조문 순으로 펼쳐집니다.</p>
       <div id="tocTree" class="toc-tree"></div>
       <div id="tocDetail" style="display:none;margin-top:10px;"></div>
-    </div>
-
-    <div class="card" id="resultCard" style="display:none;">
-      <h2>2. 검토 메모 (결과)</h2>
-      <div id="resultBody"></div>
-      <div class="row" id="downloadRow" style="display:none;">
-        <button class="secondary" onclick="downloadMemo()">📄 마크다운으로 다운로드</button>
-      </div>
     </div>
   </div>
 
@@ -1652,8 +1662,11 @@ function showTocArticle(refIdx){
   box.style.display = 'block';
   box.innerHTML = `<div class="result-card">
     <div class="result-head">
+      <div class="result-head-row">
+        ${lawBadgeHtml(a)}
+        <span class="result-meta">시행일 ${escapeHtml(a.effectiveDate||'-')}</span>
+      </div>
       <span class="artno">${escapeHtml(a.articleNo)} (${escapeHtml(a.title)})</span>
-      <span class="result-meta">${escapeHtml(a.lawName||'')} · 시행일 ${escapeHtml(a.effectiveDate||'-')}</span>
     </div>
     <div class="summary-line">📌 요약(발췌): ${escapeHtml(oneLineSummary(a))}</div>
     <div class="origtext">${escapeHtml(articleFullText(a))}</div>
@@ -1850,23 +1863,33 @@ function textContains(target, term){
   return target.includes(term) || normalize(target).includes(normalize(term));
 }
 
-function searchArticles(searchTerms){
+/* dictTerms(용어사전 매칭 — 신뢰도 높음)와 naiveTerms(단순 토큰화 — 신뢰도 낮음)를 구분해서 채점.
+   naiveTerms는 흔한 단어("절차","변경","동의" 등)가 섞이기 쉬워, 단 하나만 걸렸다고 바로 채택하면
+   무관한 조항이 대량으로 걸리는 문제(과거에 한 이슈에 150건 이상 걸린 적 있음)가 재발함.
+   그래서 dictTerms는 1개만 걸려도 채택하되, naiveTerms는 서로 다른 단어가 최소 2개 이상
+   겹칠 때만(우연한 단어 하나가 아니라 여러 단어가 함께 등장 = 진짜 관련 있을 가능성이 높음) 채택함. */
+function searchArticles(dictTerms, naiveTerms){
+  naiveTerms = naiveTerms || [];
   const results = [];
-  articles.forEach(art=>{
-    const matches = [];
-    searchTerms.forEach(term=>{
-      if(textContains(art.title, term)) matches.push({term, location:'조문제목'});
-      (art.paragraphs||[]).forEach(p=>{
-        if(textContains(p.text, term)) matches.push({term, location:`${p.label}항`});
-        (p.subItems||[]).forEach(si=>{
-          if(textContains(si.text, term)) matches.push({term, location:`${p.label}항 ${si.label}호`});
-        });
+  const matchIn = (art, term) => {
+    const found = [];
+    if(textContains(art.title, term)) found.push({term, location:'조문제목'});
+    (art.paragraphs||[]).forEach(p=>{
+      if(textContains(p.text, term)) found.push({term, location:`${p.label}항`});
+      (p.subItems||[]).forEach(si=>{
+        if(textContains(si.text, term)) found.push({term, location:`${p.label}항 ${si.label}호`});
       });
     });
-    if(matches.length>0){
-      const distinct = new Set(matches.map(m=>m.term));
-      results.push({art, matches, score: distinct.size*10 + matches.length});
-    }
+    return found;
+  };
+  articles.forEach(art=>{
+    const dictMatches = dictTerms.flatMap(term => matchIn(art, term));
+    const naiveMatches = naiveTerms.flatMap(term => matchIn(art, term));
+    const distinctNaive = new Set(naiveMatches.map(m=>m.term)).size;
+    if(dictMatches.length === 0 && distinctNaive < 2) return;
+    const matches = dictMatches.concat(naiveMatches);
+    const distinct = new Set(matches.map(m=>m.term));
+    results.push({art, matches, score: distinct.size*10 + matches.length});
   });
   results.sort((a,b)=>b.score-a.score);
   return results;
@@ -1988,6 +2011,20 @@ function highlightText(text, terms){
   return escaped;
 }
 
+function lawSourceOf(art){
+  return DATA_SOURCES.find(d => d.lawName === art.lawName) || null;
+}
+function lawBadgeHtml(art){
+  const src = lawSourceOf(art);
+  const key = src ? src.key : 'other';
+  const label = src ? src.label : (art.lawName || '법령 미상');
+  return `<span class="law-badge law-badge-${key}">${escapeHtml(label)}</span>`;
+}
+function lawLabelOf(art){
+  const src = lawSourceOf(art);
+  return src ? src.officialName : (art.lawName || '');
+}
+
 function buildResultView(issue, searchTerms, results, meta){
   meta = meta || {};
   const providerLabel = meta.provider === 'anthropic' ? 'Claude' : 'Gemini';
@@ -1995,6 +2032,9 @@ function buildResultView(issue, searchTerms, results, meta){
     ? `<span class="tag" style="background:#e6f4ea;color:var(--ok);">🤖 AI(${providerLabel})가 전체 ${articles.length}개조를 직접 검토함</span>`
     : '<span class="tag" style="background:#fff3b0;color:#7a5b00;">⚠ 규칙 기반 키워드 매칭 (AI 키 없음 — 놓치는 조문이 있을 수 있음)</span>';
   const errNote = meta.error ? `<p class="small" style="color:#c0392b;margin:4px 0 0;">⚠ AI 검토 실패로 규칙 기반 키워드 매칭으로 대체됨: ${escapeHtml(meta.error)}</p>` : '';
+  const truncNote = meta.truncatedFrom
+    ? `<p class="small" style="color:#7a5b00;margin:4px 0 0;">⚠ 규칙 기반 매칭으로 ${meta.truncatedFrom}건이 걸렸지만, 관련성 높은 상위 ${results.length}건만 표시합니다. 사이드바에서 AI 키를 등록하면 전체 조문을 직접 검토해 노이즈 없이 보여드립니다.</p>`
+    : '';
 
   const termsLine = meta.mode === 'ai'
     ? (searchTerms.length > 0
@@ -2003,7 +2043,7 @@ function buildResultView(issue, searchTerms, results, meta){
     : `<b>실제 사용한 검색어</b><br>${searchTerms.map(t=>`<span class="tag">${escapeHtml(t)}</span>`).join(' ')}`;
 
   let html = `<div class="used-terms"><b>입력 이슈</b><br>${escapeHtml(issue)}<br><br>
-    ${modeTag}${errNote}<br>
+    ${modeTag}${errNote}${truncNote}<br>
     ${termsLine}</div>`;
 
   let md = `# 법령 검토 메모\n\n**입력 이슈**\n${issue}\n\n**검토 방식**: ${meta.mode === 'ai' ? `AI가 전체 ${articles.length}개조를 직접 검토` : '규칙 기반 키워드 매칭'}\n\n`;
@@ -2029,8 +2069,12 @@ function buildResultView(issue, searchTerms, results, meta){
         : (meta.mode === 'ai' ? 'AI가 조문 내용을 직접 읽고 이슈와 관련 있다고 판단함 (용어사전 매칭 단어 없음)' : '');
       html += `<div class="result-card">
         <div class="result-head">
-          <span><span class="rank">${idx+1}순위</span> <span class="artno">${escapeHtml(art.articleNo)} (${escapeHtml(art.title)})</span></span>
-          <span class="result-meta">${escapeHtml(art.lawName||'')} · 시행일 ${escapeHtml(art.effectiveDate||'-')}</span>
+          <div class="result-head-row">
+            <span class="rank">${idx+1}순위</span>
+            ${lawBadgeHtml(art)}
+            <span class="result-meta">시행일 ${escapeHtml(art.effectiveDate||'-')}</span>
+          </div>
+          <span class="artno">${escapeHtml(art.articleNo)} (${escapeHtml(art.title)})</span>
         </div>
         <div class="summary-line" id="summary-${idx}">${summaryLabel}: ${escapeHtml(summaryText)}</div>
         ${locLine ? `<div class="match-loc">${locLine}</div>` : ''}
@@ -2044,7 +2088,7 @@ function buildResultView(issue, searchTerms, results, meta){
 
       md += `## ${idx+1}순위 — ${art.articleNo}(${art.title})\n`;
       md += hasAiExplain ? `- 이슈 관련 해설(AI): ${summaryText}\n` : `- 요약(발췌): ${summaryText}\n`;
-      md += `- 법령: ${art.lawName||''}\n`;
+      md += `- 법령: ${lawLabelOf(art)}\n`;
       if(locList.length > 0) md += `- 걸린 단어/위치: ${locList.join(', ')}\n`;
       md += `- 시행일: ${art.effectiveDate||'-'}\n`;
       md += `- 원문 링크: ${art.sourceUrl||'-'}\n`;
@@ -2165,10 +2209,15 @@ async function runSearch(){
     btn.disabled = false; loadingMsg.style.display = 'none';
   }
 
+  const RULE_RESULT_CAP = 20;
   if(meta.mode !== 'ai'){
     const naiveTerms = extractNaiveTerms(issue);
     searchTerms = Array.from(new Set(dictTerms.concat(naiveTerms)));
-    results = searchArticles(searchTerms);
+    results = searchArticles(dictTerms, naiveTerms);
+    if(results.length > RULE_RESULT_CAP){
+      meta.truncatedFrom = results.length;
+      results = results.slice(0, RULE_RESULT_CAP);
+    }
   }
 
   // 굵게 강조·"걸린 단어" 표시는 용어사전 매칭 결과만 사용 (naive 토큰 노이즈 제외)
