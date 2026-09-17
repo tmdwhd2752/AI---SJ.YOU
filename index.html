@@ -2212,6 +2212,12 @@ async function runSearch(){
         .map(k => { const idx = parseInt(k, 10); const art = articles[idx]; return art ? { art, matches: [], aiExplanation: finalMap[k] } : null; })
         .filter(Boolean);
 
+      // AI가 프롬프트 지침(정의 조문 제외)을 놓치는 경우에 대비한 결정론적 안전장치 —
+      // 프롬프트만 믿지 않고 코드에서도 한 번 더 확실히 걸러낸다.
+      if(!issueAsksForDefinition(issue)){
+        results = results.filter(r => r.art.title !== '정의');
+      }
+
       meta.mode = 'ai';
       meta.filtered = true;
     }catch(e){
