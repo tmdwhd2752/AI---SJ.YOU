@@ -77,6 +77,7 @@
   .modal-overlay{position:fixed;inset:0;background:rgba(15,20,30,0.6);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
   .modal-box{background:#fff;border-radius:14px;max-width:760px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.3);}
   .modal-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:18px 22px;border-bottom:1px solid var(--border);}
+  .modal-header button.ghost{white-space:nowrap;flex-shrink:0;}
   .modal-body{padding:6px 22px 22px;overflow-y:auto;}
   .modal-body h3{font-family:var(--sans);font-weight:800;font-size:14px;color:var(--navy2);margin:18px 0 6px;}
   .modal-body table{margin-top:4px;}
@@ -181,6 +182,16 @@
   .issue-log-form input[type=text]{margin-bottom:8px;font-size:12.5px;}
   .issue-log-form button{font-size:12.5px;padding:8px 14px;background:#c9781e;box-shadow:0 2px 8px rgba(201,120,30,.3);}
   .issue-log-form button.ghost-cancel{background:#fff;color:var(--muted);border:1px solid #ecd8b5;box-shadow:none;}
+  .issue-log-more-toggle{width:100%;background:#fbf7ee;color:#8a5a1e;border:1px dashed #e6ddc8;font-size:12px;padding:8px;margin-bottom:10px;}
+  .issue-log-more-toggle:hover{opacity:1;background:#f5edd9;}
+
+  .project-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 2px;}
+  .admin-mini-btn{font-size:11.5px;padding:6px 12px;}
+  .stage-admin-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:8px;
+    background:#fff;color:var(--text);border:1px solid var(--border);border-radius:8px;
+    padding:10px 13px;margin-bottom:7px;font-size:13px;font-weight:600;text-align:left;}
+  .stage-admin-row:hover{border-color:#c9781e;}
+  .stage-admin-row.is-current{background:#fff6ea;border-color:#c9781e;color:#8a5a1e;}
 
   #appToast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1a7f4b;color:#fff;
     padding:11px 22px;border-radius:24px;font-size:13.5px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);
@@ -312,6 +323,10 @@
     <div class="card card-project">
       <h2>🏢 명동 2지구 절차도 (우리 사업 기준 · 토지등소유자 시행방식)</h2>
       <p class="small">일반 절차도와 달리 조합설립 단계가 없고, 토지수용재결·정비계획 변경이 별도 단계로 있습니다. 📍 표시가 현재 우리 사업이 있는 단계입니다.</p>
+      <div class="project-toolbar">
+        <button class="ghost admin-mini-btn" onclick="exportAllIssueLogs()" title="지금까지 쌓인 팀 이슈 기록 전체를 CSV 파일로 내려받습니다">📥 이슈 기록 내보내기</button>
+        <button class="ghost admin-mini-btn" onclick="openCurrentStageAdmin()" title="관리자 전용 — 📍현재 단계 표시를 변경합니다">⚙️ 현재 단계 관리 (관리자)</button>
+      </div>
       <div class="process-timeline theme-project" id="projectTimeline"></div>
       <div id="projectDetail" class="process-detail theme-project" style="display:none;"></div>
     </div>
@@ -353,6 +368,20 @@
   </div>
 </div>
 
+<!-- ================= 명동 2지구 "현재 단계" 관리자 변경 모달 (v23) ================= -->
+<div id="stageAdminOverlay" class="modal-overlay" style="display:none;" onclick="if(event.target===this) closeStageAdmin()">
+  <div class="modal-box" style="max-width:420px;">
+    <div class="modal-header">
+      <div>
+        <h2 style="margin:0;border:none;padding:0;font-family:var(--heading);font-size:17px;font-weight:800;color:var(--navy2);">⚙️ 현재 단계 변경</h2>
+        <p class="small" style="margin:4px 0 0;">관리자 전용 · 📍 현재 표시를 옮길 단계를 눌러주세요. 팀원 전체 화면에 반영됩니다.</p>
+      </div>
+      <button class="ghost" onclick="closeStageAdmin()">✕ 닫기</button>
+    </div>
+    <div class="modal-body" id="stageAdminList"></div>
+  </div>
+</div>
+
 <!-- 팀 이슈 기록을 팀원 전체와 공유하기 위한 Supabase 클라이언트 라이브러리.
      아래 SUPABASE_URL/SUPABASE_ANON_KEY를 채우지 않으면 자동으로 이 브라우저의 localStorage에만 저장됨(팀 공유 안 됨). -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -384,12 +413,30 @@
    2) 프로젝트의 Settings > API 에서 Project URL과 anon public key를 아래에 붙여넣기.
       (anon key는 공개되어도 되는 값 — RLS 정책으로 접근을 제어함)
    3) 누가 썼는지는 "익명 로그인"으로 브라우저마다 자동 발급되는 고유 ID(owner_id)로 구분함.
-      로그인 화면 없이 조용히 동작하며, 이 ID 덕분에 본인 글만 수정·삭제할 수 있게 됨. */
+      로그인 화면 없이 조용히 동작하며, 이 ID 덕분에 본인 글만 수정·삭제할 수 있게 됨.
+   4) (선택, v23) "명동 2지구 현재 단계" 표시를 팀 전체와 공유하려면 아래 테이블도 추가로 생성:
+        create table app_settings (
+          key text primary key,
+          value text,
+          updated_at timestamptz not null default now()
+        );
+        alter table app_settings enable row level security;
+        create policy "app_settings_select_all" on app_settings for select using (true);
+        create policy "app_settings_write_all" on app_settings for insert with check (true);
+        create policy "app_settings_update_all" on app_settings for update using (true) with check (true);
+      이 테이블을 안 만들어도 앱은 깨지지 않음 — 이 브라우저에만 저장되는 방식(localStorage)으로 자동 대체됨.
+      (RLS를 열어둔 이유: 이 앱엔 실제 로그인이 없어서 DB단에서 "관리자만" 구분할 방법이 없음 —
+       대신 화면의 ADMIN_PIN으로 관리자 여부를 확인하는 방식으로 처리함.) */
 const SUPABASE_URL = "https://rjowdqbjtdlecdirgxlh.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_CcMPbKFj9I5xp8OUAq_Wug_21BbtTGe";
 const supabaseClient = (window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY)
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
+
+/* 명동 2지구 "현재 단계" 변경은 관리자(승종님)만 하도록 하는 간단한 PIN.
+   실제 로그인 시스템이 아니라 팀원이 실수로 누르는 걸 막는 정도의 약한 잠금임 — 다른 값으로
+   바꾸고 싶으면 아래 문자열만 수정하면 됨. */
+const ADMIN_PIN = "2580";
 
 let currentUserId = null;
 let anonSessionPromise = null;
@@ -1075,6 +1122,115 @@ function renderProcessTimeline(){
   registerAndRenderTimeline('projectTimeline', PROJECT_STAGES, 'projectDetail');
 }
 
+/* ============ 명동 2지구 "현재 단계" 관리자 변경 (v23) ============
+   PROJECT_STAGES 배열의 current:true는 코드에 박혀있던 기본값이었는데, 사업이 다음 단계로
+   넘어갈 때마다 코드를 고쳐달라고 해야 하는 불편함이 있었음. 이제는 화면에서 직접 바꿀 수
+   있고, app_settings 테이블(있으면)을 통해 팀 전체에 공유됨. 단, 아무나 바꾸면 안 되니
+   ADMIN_PIN으로 가볍게 잠가둠(실제 로그인 시스템은 아님). */
+const CURRENT_STAGE_SETTING_KEY = 'project_current_stage';
+
+async function loadCurrentStageSetting(){
+  if(supabaseClient){
+    try{
+      await ensureAnonSession();
+      const { data, error } = await supabaseClient.from('app_settings')
+        .select('value').eq('key', CURRENT_STAGE_SETTING_KEY).maybeSingle();
+      if(!error && data && data.value) return data.value;
+    }catch(e){
+      console.error('현재 단계 설정을 불러오지 못했습니다 (app_settings 테이블이 없을 수 있음 — localStorage로 대체):', e);
+    }
+  }
+  return localStorage.getItem(CURRENT_STAGE_SETTING_KEY);
+}
+
+async function saveCurrentStageSetting(title){
+  localStorage.setItem(CURRENT_STAGE_SETTING_KEY, title);
+  if(!supabaseClient) return;
+  try{
+    await ensureAnonSession();
+    const { error } = await supabaseClient.from('app_settings')
+      .upsert({ key: CURRENT_STAGE_SETTING_KEY, value: title, updated_at: new Date().toISOString() });
+    if(error) throw error;
+  }catch(e){
+    console.error('현재 단계 설정을 팀 전체에 공유 저장하지 못했습니다 (app_settings 테이블이 없을 수 있음):', e);
+  }
+}
+
+function openCurrentStageAdmin(){
+  const pin = prompt('관리자 PIN을 입력하세요.\n(명동 2지구 현재 단계는 관리자만 변경해주세요)');
+  if(pin === null) return;
+  if(pin !== ADMIN_PIN){ alert('PIN이 올바르지 않습니다.'); return; }
+  renderStageAdminList();
+  document.getElementById('stageAdminOverlay').style.display = 'flex';
+}
+function closeStageAdmin(){
+  document.getElementById('stageAdminOverlay').style.display = 'none';
+}
+function renderStageAdminList(){
+  const box = document.getElementById('stageAdminList');
+  if(!box) return;
+  box.innerHTML = PROJECT_STAGES.map((s,i)=>`
+    <button type="button" class="stage-admin-row ${s.current ? 'is-current' : ''}" onclick="setCurrentStage(${i})">
+      <span>${s.icon} ${i+1}. ${escapeHtml(s.title)}</span>
+      ${s.current ? '<span class="current-inline-badge">📍 현재</span>' : ''}
+    </button>`).join('');
+}
+async function setCurrentStage(idx){
+  const target = PROJECT_STAGES[idx];
+  if(!target || target.current){ closeStageAdmin(); return; }
+  if(!confirm(`"${target.title}" 단계를 📍현재 단계로 변경할까요?\n(팀원 전체 화면에 반영됩니다)`)) return;
+  PROJECT_STAGES.forEach((s,i)=>{ s.current = (i===idx); });
+  await saveCurrentStageSetting(target.title);
+  closeStageAdmin();
+  registerAndRenderTimeline('projectTimeline', PROJECT_STAGES, 'projectDetail');
+  showToast(`✅ 현재 단계가 "${target.title}"(으)로 변경되었습니다`);
+}
+
+/* ============ 팀 이슈 기록 전체 내보내기 (v23) ============
+   Supabase가 "누구나 쓰기/삭제 가능"으로 열려있어서, 실수로 지워지는 경우를 대비한 백업 수단. */
+async function exportAllIssueLogs(){
+  const timelineLabel = { processTimeline:'일반 절차도', projectTimeline:'명동 2지구' };
+  let rows = [];
+  try{
+    if(supabaseClient){
+      await ensureAnonSession();
+      const { data, error } = await supabaseClient.from('issue_logs').select('*').order('created_at', { ascending:true });
+      if(error) throw error;
+      rows = data.map(r => ({
+        timeline: r.timeline_id, stage: r.stage_title, substep: r.substep_title,
+        author: r.author || '', date: (r.created_at||'').slice(0,10),
+        issue: r.issue, resolution: r.resolution || ''
+      }));
+    } else {
+      const logs = loadLocalIssueLogs();
+      Object.keys(logs).forEach(key => {
+        const [timeline, stage, substep] = key.split('::');
+        (logs[key]||[]).forEach(e => rows.push({
+          timeline, stage, substep, author: e.author || '', date: e.date || '', issue: e.issue, resolution: e.resolution || ''
+        }));
+      });
+    }
+  }catch(e){
+    alert('이슈 기록을 불러오지 못해 내보내기에 실패했습니다: ' + e.message);
+    return;
+  }
+  if(!rows.length){ alert('아직 내보낼 이슈 기록이 없습니다.'); return; }
+
+  const header = ['절차도','단계','세부단계','작성자','작성일','상태','이슈','해결방법'];
+  const csvRows = [header, ...rows.map(r => [
+    timelineLabel[r.timeline] || r.timeline, r.stage, r.substep, r.author, r.date,
+    (r.resolution && r.resolution.trim()) ? '해결' : '진행중', r.issue, r.resolution
+  ])];
+  const csv = csvRows.map(row => row.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  triggerDownload(blob, `이슈기록_백업_${new Date().toISOString().slice(0,10)}.csv`);
+  showToast('✅ 이슈 기록을 CSV로 내보냈습니다');
+}
+function csvEscape(v){
+  const s = v === undefined || v === null ? '' : String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+
 function handleStepClick(timelineId, i){
   const reg = TIMELINE_REGISTRY[timelineId];
   if(!reg) return;
@@ -1188,28 +1344,43 @@ async function issueLogSectionHtml(timelineId, stageIdx, subIdx){
   catch(e){ loadError = true; console.error('이슈 기록 조회 실패', e); }
   issueLogCache[`${timelineId}::${stageIdx}::${subIdx}`] = entries;
 
+  const renderEntry = (e) => {
+    const resolved = !!(e.resolution && e.resolution.trim());
+    const idArg = typeof e.id === 'number' ? e.id : `'${e.id}'`;
+    const isMine = !supabaseClient || (currentUserId && e.ownerId === currentUserId);
+    return `
+    <div class="issue-log-item">
+      ${isMine ? `
+      <div class="issue-log-actions">
+        <button class="issue-log-edit" title="수정" onclick="handleEditClick('${timelineId}',${stageIdx},${subIdx},${idArg})">✎</button>
+        <button class="issue-log-delete" title="삭제" onclick="deleteIssueLogEntry('${timelineId}',${stageIdx},${subIdx},${idArg})">✕</button>
+      </div>` : ''}
+      <div class="issue-log-meta">
+        <span>${escapeHtml(e.date)}</span>${e.author ? `<span>· ${escapeHtml(e.author)}</span>` : ''}
+        <span class="issue-log-status ${resolved ? 'resolved' : 'open'}">${resolved ? '✅ 해결' : '🔴 진행중'}</span>
+        ${!isMine ? '<span class="issue-log-readonly">🔒 다른 팀원 작성</span>' : ''}
+      </div>
+      <div class="issue-log-issue"><b>이슈</b> ${escapeHtml(e.issue)}</div>
+      ${resolved ? `<div class="issue-log-resolution"><b>해결방법</b> ${escapeHtml(e.resolution)}</div>` : ''}
+    </div>`;
+  };
+
+  /* 이슈가 댓글처럼 계속 쌓이면 페이지가 한없이 길어지므로, 최근 몇 건만 먼저 보여주고
+     나머지는 "더보기"를 눌러야 펼쳐지게 함 (최신순 정렬이라 entries[0]이 가장 최근 글). */
+  const VISIBLE_COUNT = 3;
+  const visibleEntries = entries.slice(0, VISIBLE_COUNT);
+  const hiddenEntries = entries.slice(VISIBLE_COUNT);
+  const moreId = `${timelineId}-issueLogMore-${stageIdx}-${subIdx}`;
+
   const listHtml = loadError
     ? `<p class="small" style="color:#c0392b;">이슈 기록을 불러오지 못했습니다. 인터넷 연결 또는 Supabase 설정을 확인해주세요.</p>`
-    : (entries.length ? entries.map(e=>{
-        const resolved = !!(e.resolution && e.resolution.trim());
-        const idArg = typeof e.id === 'number' ? e.id : `'${e.id}'`;
-        const isMine = !supabaseClient || (currentUserId && e.ownerId === currentUserId);
-        return `
-        <div class="issue-log-item">
-          ${isMine ? `
-          <div class="issue-log-actions">
-            <button class="issue-log-edit" title="수정" onclick="handleEditClick('${timelineId}',${stageIdx},${subIdx},${idArg})">✎</button>
-            <button class="issue-log-delete" title="삭제" onclick="deleteIssueLogEntry('${timelineId}',${stageIdx},${subIdx},${idArg})">✕</button>
-          </div>` : ''}
-          <div class="issue-log-meta">
-            <span>${escapeHtml(e.date)}</span>${e.author ? `<span>· ${escapeHtml(e.author)}</span>` : ''}
-            <span class="issue-log-status ${resolved ? 'resolved' : 'open'}">${resolved ? '✅ 해결' : '🔴 진행중'}</span>
-            ${!isMine ? '<span class="issue-log-readonly">🔒 다른 팀원 작성</span>' : ''}
-          </div>
-          <div class="issue-log-issue"><b>이슈</b> ${escapeHtml(e.issue)}</div>
-          ${resolved ? `<div class="issue-log-resolution"><b>해결방법</b> ${escapeHtml(e.resolution)}</div>` : ''}
-        </div>`;
-      }).join('') : `<p class="small" style="color:var(--muted);">아직 기록된 이슈가 없습니다. 이 세부 단계에서 겪은 일이 있다면 아래에 남겨두세요.</p>`);
+    : (entries.length
+        ? visibleEntries.map(renderEntry).join('')
+          + (hiddenEntries.length
+              ? `<div id="${moreId}" style="display:none;">${hiddenEntries.map(renderEntry).join('')}</div>
+                 <button type="button" class="issue-log-more-toggle" id="${moreId}-btn" data-count="${hiddenEntries.length}" onclick="toggleIssueLogMore('${moreId}')">🕘 이전 기록 더보기 (${hiddenEntries.length}건)</button>`
+              : '')
+        : `<p class="small" style="color:var(--muted);">아직 기록된 이슈가 없습니다. 이 세부 단계에서 겪은 일이 있다면 아래에 남겨두세요.</p>`);
 
   const shareBadge = supabaseClient
     ? `<span class="ilh-share on">✅ 팀 전체 공유됨</span>`
@@ -1321,6 +1492,14 @@ function cancelEditIssueLogEntry(timelineId){
   delete btn.dataset.editingId;
   const cancelBtn = document.getElementById(`${timelineId}-issueLogCancelBtn`);
   if(cancelBtn) cancelBtn.style.display = 'none';
+}
+function toggleIssueLogMore(moreId){
+  const el = document.getElementById(moreId);
+  const btn = document.getElementById(`${moreId}-btn`);
+  if(!el || !btn) return;
+  const opening = el.style.display === 'none';
+  el.style.display = opening ? 'block' : 'none';
+  btn.textContent = opening ? '▲ 접기' : `🕘 이전 기록 더보기 (${btn.dataset.count}건)`;
 }
 function showToast(message, isError){
   let toast = document.getElementById('appToast');
@@ -2016,7 +2195,14 @@ renderArticleCount();
 renderOcKey();
 renderLlmKey();
 renderHistoryList();
-renderProcessTimeline();
+(async function initProcessTimelines(){
+  const savedStageTitle = await loadCurrentStageSetting();
+  if(savedStageTitle){
+    const idx = PROJECT_STAGES.findIndex(s => s.title === savedStageTitle);
+    if(idx >= 0){ PROJECT_STAGES.forEach((s,i)=>{ s.current = (i===idx); }); }
+  }
+  renderProcessTimeline();
+})();
 renderTocTree();
 renderFreshnessIdle();
 if(!history.state){
@@ -2053,6 +2239,11 @@ window.cancelEditIssueLogEntry = cancelEditIssueLogEntry;
 window.showTocArticle = showTocArticle;
 window.runFreshnessCheck = runFreshnessCheck;
 window.runRefreshOne = runRefreshOne;
+window.toggleIssueLogMore = toggleIssueLogMore;
+window.exportAllIssueLogs = exportAllIssueLogs;
+window.openCurrentStageAdmin = openCurrentStageAdmin;
+window.closeStageAdmin = closeStageAdmin;
+window.setCurrentStage = setCurrentStage;
 
 })();
 </script>
